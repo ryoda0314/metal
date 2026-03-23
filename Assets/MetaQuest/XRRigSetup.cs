@@ -2,13 +2,14 @@
 // Meta Quest / OpenXR用のXR Originセットアップヘルパー
 // シーンに配置するとXR Originリグを自動構築する
 
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.XR;
-using UnityEngine.XR;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
+#if UNITY_ANDROID
+using UnityEngine.XR.ARFoundation;
+#endif
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -179,7 +180,21 @@ public class XRRigSetup : MonoBehaviour
 #if UNITY_ANDROID
         if (enablePassthrough)
         {
-            EnablePassthrough();
+            // ARSession が必要（AR Foundation サブシステムの起動に必須）
+            if (FindAnyObjectByType<ARSession>() == null)
+            {
+                var arSessionObj = new GameObject("AR Session");
+                arSessionObj.transform.SetParent(xrOriginObj.transform);
+                arSessionObj.AddComponent<ARSession>();
+                Debug.Log("[XRRigSetup] ARSession 作成");
+            }
+
+            // ARCameraManager + ARCameraBackground でパススルーを有効化
+            // OpenXR設定の「Meta Quest: Camera (Passthrough)」機能と連携して
+            // Quest のカメラ映像を背景に描画する
+            cameraObj.AddComponent<ARCameraManager>();
+            cameraObj.AddComponent<ARCameraBackground>();
+            Debug.Log("[XRRigSetup] パススルー有効化: ARSession + ARCameraManager + ARCameraBackground");
         }
 #endif
 
@@ -390,45 +405,6 @@ public class XRRigSetup : MonoBehaviour
             if (changed) r.materials = materials;
         }
     }
-
-#if UNITY_ANDROID
-    void EnablePassthrough()
-    {
-        var displays = new List<XRDisplaySubsystem>();
-        SubsystemManager.GetSubsystems(displays);
-
-        foreach (var display in displays)
-        {
-            if (!display.running) continue;
-
-            // Environment Blend Mode を AlphaBlend に設定
-            // → Questがパススルー映像を背景に描画し、その上にシーンを合成する
-            display.SetEnvironmentBlendMode(XRDisplaySubsystem.EnvironmentBlendMode.AlphaBlend);
-            Debug.Log("[XRRigSetup] パススルー有効化: EnvironmentBlendMode = AlphaBlend");
-            return;
-        }
-
-        // Start()時点でサブシステムが未起動の場合、少し遅延して再試行
-        Debug.LogWarning("[XRRigSetup] XRDisplaySubsystem未検出。遅延して再試行します...");
-        Invoke(nameof(RetryEnablePassthrough), 0.5f);
-    }
-
-    void RetryEnablePassthrough()
-    {
-        var displays = new List<XRDisplaySubsystem>();
-        SubsystemManager.GetSubsystems(displays);
-
-        foreach (var display in displays)
-        {
-            if (!display.running) continue;
-            display.SetEnvironmentBlendMode(XRDisplaySubsystem.EnvironmentBlendMode.AlphaBlend);
-            Debug.Log("[XRRigSetup] パススルー有効化（遅延）: EnvironmentBlendMode = AlphaBlend");
-            return;
-        }
-
-        Debug.LogError("[XRRigSetup] パススルー有効化失敗: XRDisplaySubsystemが見つかりません");
-    }
-#endif
 
     InputActionProperty MakeAction(string actionName, string binding, InputActionType type = InputActionType.Value)
     {
