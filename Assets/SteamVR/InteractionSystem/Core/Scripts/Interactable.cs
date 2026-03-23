@@ -211,7 +211,7 @@ namespace Valve.VR.InteractionSystem
                 {
                     highlightSkinned.transform.position = existingSkinned.transform.position;
                     highlightSkinned.transform.rotation = existingSkinned.transform.rotation;
-                    highlightSkinned.transform.localScale = existingSkinned.transform.lossyScale;
+                    highlightSkinned.transform.localScale = existingSkinned.transform.lossyScale * 1.002f;
                     highlightSkinned.localBounds = existingSkinned.localBounds;
                     highlightSkinned.enabled = isHovering && existingSkinned.enabled && existingSkinned.gameObject.activeInHierarchy;
 
@@ -235,7 +235,7 @@ namespace Valve.VR.InteractionSystem
                 {
                     highlightRenderer.transform.position = existingRenderer.transform.position;
                     highlightRenderer.transform.rotation = existingRenderer.transform.rotation;
-                    highlightRenderer.transform.localScale = existingRenderer.transform.lossyScale;
+                    highlightRenderer.transform.localScale = existingRenderer.transform.lossyScale * 1.002f;
                     highlightRenderer.enabled = isHovering && existingRenderer.enabled && existingRenderer.gameObject.activeInHierarchy;
                 }
                 else if (highlightRenderer != null)
