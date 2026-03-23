@@ -89,13 +89,23 @@ public class PolishUIController : MonoBehaviour
         Debug.Log("[PolishUI] Start() called");
         try {
             if (!polisher) polisher = GetComponent<MetalSwirlPolisher>();
-#if UNITY_2023_1_OR_NEWER
-            if (!polisher) polisher = FindFirstObjectByType<MetalSwirlPolisher>();
-#else
-            if (!polisher) polisher = FindObjectOfType<MetalSwirlPolisher>();
-#endif
+            // targetRenderer がある（実際に研磨する）インスタンスを優先
+            if (!polisher || !polisher.targetRenderer)
+            {
+                MetalSwirlPolisher[] all = FindObjectsByType<MetalSwirlPolisher>(FindObjectsSortMode.None);
+                foreach (var p in all)
+                {
+                    if (p.targetRenderer != null)
+                    {
+                        polisher = p;
+                        break;
+                    }
+                }
+                // fallback
+                if (!polisher && all.Length > 0) polisher = all[0];
+            }
 
-            Debug.Log($"[PolishUI] Polisher found: {(polisher != null ? polisher.name : "NULL")}");
+            Debug.Log($"[PolishUI] Polisher found: {(polisher != null ? polisher.name : "NULL")}, hasRenderer={polisher?.targetRenderer != null}");
 #if !UNITY_ANDROID
             // CylinderPolisher も探す (SteamVR のみ)
             if (!cylinderPolisher) cylinderPolisher = GetComponent<CylinderPolisher>();
@@ -832,16 +842,18 @@ public class PolishUIController : MonoBehaviour
         if (category == MenuCategory.Tool)
         {
             CreateActionButton(col.transform, "Reset", new Color(0.3f, 0.3f, 0.3f), () => {
-                Debug.Log($"[PolishUI] Reset pressed. polisher={(polisher != null ? polisher.name : "NULL")}");
-                if (polisher) polisher.ResetMask();
+                MetalSwirlPolisher[] all = FindObjectsByType<MetalSwirlPolisher>(FindObjectsSortMode.None);
+                foreach (var p in all) p.ResetMask();
 #if !UNITY_ANDROID
                 if (cylinderPolisher) cylinderPolisher.ResetMask();
 #endif
+                Debug.Log($"[PolishUI] Reset: {all.Length} polishers");
                 PlaySound(soundClick);
             });
             CreateActionButton(col.transform, "Fill White", new Color(0.3f, 0.3f, 0.3f), () => {
-                Debug.Log($"[PolishUI] Fill White pressed. polisher={(polisher != null ? polisher.name : "NULL")}");
-                if (polisher) polisher.FillMaskWhite();
+                MetalSwirlPolisher[] all = FindObjectsByType<MetalSwirlPolisher>(FindObjectsSortMode.None);
+                foreach (var p in all) p.FillMaskWhite();
+                Debug.Log($"[PolishUI] FillWhite: {all.Length} polishers");
                 PlaySound(soundClick);
             });
         }
@@ -1048,21 +1060,11 @@ public class PolishUIController : MonoBehaviour
         btn.colors = cb;
 
         btn.onClick.AddListener(() => {
-            Debug.Log($"[PolishUI] Preset button pressed: {preset}, polisher={(polisher != null ? polisher.name : "NULL")}");
-            if (!polisher)
-            {
-                polisher = FindFirstObjectByType<MetalSwirlPolisher>();
-            }
-            if (polisher)
-            {
-                polisher.preset = preset;
-                polisher.FillWithPreset();
-                Debug.Log($"[PolishUI] Preset applied: {preset}");
-            }
-            else
-            {
-                Debug.LogError("[PolishUI] MetalSwirlPolisher not found!");
-            }
+            // 全ての MetalSwirlPolisher にプリセットを適用
+            MetalSwirlPolisher[] allPolishers = FindObjectsByType<MetalSwirlPolisher>(FindObjectsSortMode.None);
+            foreach (var p in allPolishers)
+                p.preset = preset;
+            Debug.Log($"[PolishUI] Preset set: {preset} ({allPolishers.Length} polishers)");
 #if !UNITY_ANDROID
             // CylinderPolisher にも同じプリセットを設定
             if (cylinderPolisher)

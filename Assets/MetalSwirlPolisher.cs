@@ -810,38 +810,29 @@ public class MetalSwirlPolisher : MonoBehaviour
     }
 
     // ====== Editor用 公開メソッド ======
+    /// <summary>マスクが初期化済みか（外部から安全に呼べるか判定用）</summary>
+    public bool IsReady => maskTex != null;
+
     /// <summary>研磨マスクをリセット（黒＝未研磨状態）</summary>
     public void ResetMask()
     {
-        if (maskTex == null)
-        {
-            Debug.LogWarning("[Polisher] マスクがまだ初期化されていません。Play中に実行してください。");
-            return;
-        }
+        if (maskTex == null) return;
         ClearMask();
-        Debug.Log("[Polisher] マスクをリセットしました");
+        Debug.Log($"[Polisher] マスクをリセットしました on {gameObject.name}");
     }
 
     /// <summary>研磨マスクを全面研磨（白＝研磨済み状態）</summary>
     public void FillMaskWhite()
     {
-        if (maskTex == null)
-        {
-            Debug.LogWarning("[Polisher] マスクがまだ初期化されていません。Play中に実行してください。");
-            return;
-        }
+        if (maskTex == null) return;
         FillWhite();
-        Debug.Log("[Polisher] 全面を研磨済みにしました");
+        Debug.Log($"[Polisher] 全面を研磨済みにしました on {gameObject.name}");
     }
 
     /// <summary>現在のプリセットで全面を塗りつぶす</summary>
     public void FillWithPreset()
     {
-        if (maskTex == null)
-        {
-            Debug.LogWarning("[Polisher] マスクがまだ初期化されていません。");
-            return;
-        }
+        if (maskTex == null) return;
 
         ClearMask();
 
