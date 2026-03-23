@@ -49,6 +49,9 @@ crashlytics-build.properties
 ehthumbs.db
 Thumbs.db
 
+# Unity build temp
+.utmp/
+
 # Gradle (Android builds)
 /[Aa]ssets/Plugins/Android/gradleOut/
 .gradle/
