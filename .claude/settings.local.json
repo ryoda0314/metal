@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:/Users/edama/AppData/Local/Android/Sdk/platform-tools/adb.exe shell dumpsys package com.UnityTechnologies.com.unity.template.urpblank)"
+    ]
+  }
+}

@@ -33,6 +33,26 @@ Cross-platform via `#if UNITY_ANDROID` / `#if !UNITY_ANDROID` conditional compil
 - `Assets/MetalSwirlPolisher.cs` — Metal polishing tool (~1400 lines, cross-platform)
 - **子オブジェクトに `AddComponent<XRGrabInteractable>()` 禁止** — `[RequireComponent(typeof(Rigidbody))]` により Rigidbody が自動追加され、親子間で物理が壊れる。子オブジェクトでは `GetComponentInParent<XRGrabInteractable>()` で親のものを使う（SteamVR の `GetComponentInParent<Interactable>()` と同パターン）
 
+### Mixed Reality Passthrough (Meta Quest)
+- `enablePassthrough` bool on XRRigSetup (default true)
+- **OpenXR Features** (Project Settings → XR → OpenXR → Android):
+  - `PassthroughBlendFeature` (`Assets/MetaQuest/PassthroughBlendFeature.cs`) — `SetEnvironmentBlendMode(AlphaBlend)` in `OnSessionCreate`
+  - `PassthroughBlendFeatureEnabler` (`Assets/MetaQuest/Editor/`) — Editor auto-enable script
+  - `ARCameraFeature` (Meta Quest: Camera) — creates/starts passthrough layer via `XR_FB_passthrough`
+  - `ARSessionFeature` (Meta Quest: Session) — must be enabled for manifest hook to inject `com.oculus.feature.PASSTHROUGH`
+- **Runtime components** (added by XRRigSetup when `enablePassthrough`):
+  - `ARSession` — AR subsystem lifecycle
+  - `ARCameraManager` — starts `MetaOpenXRCameraSubsystem` which calls `xrPassthroughStartFB`
+  - Do NOT add `ARCameraBackground` — `supportsCameraImage=false` so it renders black overlay
+  - Camera: `ClearFlags.SolidColor`, `backgroundColor.a = 0`
+- **URP settings** (`Assets/Settings/Mobile_RPAsset.asset`):
+  - `m_AllowPostProcessAlphaOutput: 1` — ポストプロセスがアルファを保持（0だとα=1に上書きされパススルー不可）
+  - `m_PrefilterAlphaOutput: 1` — アルファ出力シェーダーバリアントのストリップ防止
+  - `m_SupportsHDR: 0` — HDRフォーマットがアルファを壊す問題を回避
+  - ⚠️ **Unity EditorでURP AssetをInspectorで触るとこれらが勝手にリセットされる。修正はYAMLを直接編集すること**
+- **地面非表示**: `HideGroundForPassthrough()` でシーン内のPlaneメッシュRendererを無効化（白い地面がパススルーを遮るため）
+- **AndroidManifest**: `com.oculus.feature.PASSTHROUGH` は `ModifyAndroidManifestMeta` ビルドフックが自動注入（ARSessionFeature有効時）。初回インストール時は `adb uninstall` してからインストールしないとOS側のキャッシュで `App Enabled for PT: 0` になる場合がある
+
 ### Input Bindings (Quest OpenXR)
 - Use `/grip` (float) NOT `gripPress` (doesn't exist on Quest)
 - Use `/trigger` (float) NOT `triggerPress`

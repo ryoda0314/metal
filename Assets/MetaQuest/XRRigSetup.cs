@@ -193,8 +193,10 @@ public class XRRigSetup : MonoBehaviour
             // OpenXR設定の「Meta Quest: Camera (Passthrough)」機能と連携して
             // Quest のカメラ映像を背景に描画する
             cameraObj.AddComponent<ARCameraManager>();
-            cameraObj.AddComponent<ARCameraBackground>();
-            Debug.Log("[XRRigSetup] パススルー有効化: ARSession + ARCameraManager + ARCameraBackground");
+            Debug.Log("[XRRigSetup] パススルー有効化: ARSession + ARCameraManager");
+
+            // パススルー時に白い地面が邪魔になるので非表示にする
+            HideGroundForPassthrough();
         }
 #endif
 
@@ -517,6 +519,24 @@ public class XRRigSetup : MonoBehaviour
         var renderer = obj.GetComponent<Renderer>();
         if (renderer != null)
             renderer.material.color = color;
+    }
+
+    /// <summary>
+    /// パススルー時に白い地面（Plane等）を非表示にする
+    /// </summary>
+    void HideGroundForPassthrough()
+    {
+        // シーン内の "Plane" オブジェクトを探して非表示にする
+        var allObjects = FindObjectsByType<MeshRenderer>(FindObjectsSortMode.None);
+        foreach (var mr in allObjects)
+        {
+            var mf = mr.GetComponent<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null && mf.sharedMesh.name == "Plane")
+            {
+                mr.enabled = false;
+                Debug.Log($"[XRRigSetup] パススルー: 地面メッシュ非表示 '{mr.gameObject.name}'");
+            }
+        }
     }
 
 #if UNITY_EDITOR

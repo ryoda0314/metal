@@ -5,6 +5,7 @@
 
 using UnityEngine;
 using System.Collections;
+using System.Collections.Generic;
 #if UNITY_ANDROID
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
@@ -211,8 +212,8 @@ public class MetalSwirlPolisher : MonoBehaviour
         }
 
 #if UNITY_ANDROID
-        if (currentXRController != null)
-            currentXRController.SendHapticImpulse(amplitude, duration);
+        foreach (var ctrl in currentXRControllers)
+            if (ctrl != null) ctrl.SendHapticImpulse(amplitude, duration);
 #else
         Hand hapticHand = currentHand ?? (interactable != null ? interactable.attachedToHand : null);
         if (hapticHand != null)
@@ -304,21 +305,38 @@ public class MetalSwirlPolisher : MonoBehaviour
                 xrGrabInteractable.useDynamicAttach = true;
                 xrGrabInteractable.throwOnDetach = false;
                 xrGrabInteractable.movementType = XRBaseInteractable.MovementType.Instantaneous;
-                xrGrabInteractable.selectMode = InteractableSelectMode.Single;
+                xrGrabInteractable.selectMode = InteractableSelectMode.Multiple;
 
                 xrGrabInteractable.selectEntered.AddListener((SelectEnterEventArgs args) =>
                 {
                     var interactorComponent = args.interactorObject as Component;
                     if (interactorComponent != null)
-                        currentXRController = interactorComponent.GetComponentInParent<XRBaseController>();
-                    Debug.Log("[Polisher] XR Grab started");
+                    {
+                        var ctrl = interactorComponent.GetComponentInParent<XRBaseController>();
+                        if (ctrl != null && !currentXRControllers.Contains(ctrl))
+                            currentXRControllers.Add(ctrl);
+                        if (!xrInteractorTransforms.Contains(interactorComponent.transform))
+                        {
+                            xrInteractorTransforms.Add(interactorComponent.transform);
+                            if (xrInteractorTransforms.Count == 2)
+                                secondHandLocalGrabPoint = xrGrabInteractable.transform.InverseTransformPoint(interactorComponent.transform.position);
+                        }
+                    }
+                    Debug.Log($"[Polisher] XR Grab started (hands={currentXRControllers.Count})");
                 });
 
                 xrGrabInteractable.selectExited.AddListener((SelectExitEventArgs args) =>
                 {
-                    currentXRController = null;
-                    Debug.Log("[Polisher] XR Grab ended. Stopping.");
-                    StartCoroutine(ForceStopRoutine());
+                    var interactorComponent = args.interactorObject as Component;
+                    if (interactorComponent != null)
+                    {
+                        var ctrl = interactorComponent.GetComponentInParent<XRBaseController>();
+                        if (ctrl != null) currentXRControllers.Remove(ctrl);
+                        xrInteractorTransforms.Remove(interactorComponent.transform);
+                    }
+                    Debug.Log($"[Polisher] XR Grab ended (hands={currentXRControllers.Count})");
+                    if (currentXRControllers.Count == 0)
+                        StartCoroutine(ForceStopRoutine());
                 });
             }
 #else
@@ -532,6 +550,30 @@ public class MetalSwirlPolisher : MonoBehaviour
              return;
         }
 
+#if UNITY_ANDROID
+        // === 両手持ち回転補正 ===
+        // XRI Instantaneous は hand1 で位置を決めるので、
+        // hand2 の掴み位置に向けてツールを回転させて「がっちり」感を出す
+        if (xrInteractorTransforms.Count >= 2 && xrGrabInteractable != null)
+        {
+            Transform grabRoot = xrGrabInteractable.transform;
+            Transform hand2 = xrInteractorTransforms[1];
+
+            Vector3 currentSecond = grabRoot.TransformPoint(secondHandLocalGrabPoint);
+            Vector3 targetSecond = hand2.position;
+            Vector3 pivot = grabRoot.position;
+
+            Vector3 fromVec = currentSecond - pivot;
+            Vector3 toVec = targetSecond - pivot;
+
+            if (fromVec.sqrMagnitude > 0.0001f && toVec.sqrMagnitude > 0.0001f)
+            {
+                Quaternion correction = Quaternion.FromToRotation(fromVec.normalized, toVec.normalized);
+                grabRoot.rotation = correction * grabRoot.rotation;
+            }
+        }
+#endif
+
         // === 距離計測 & 押し返し & 研磨判定 ===
         // 上方からレイを飛ばす（めり込んでも確実にヒットする）
         Vector3 planeNormal = targetCollider.transform.up;
@@ -637,7 +679,7 @@ public class MetalSwirlPolisher : MonoBehaviour
         if (!hasHapticTarget)
         {
 #if UNITY_ANDROID
-            hasHapticTarget = (currentXRController != null);
+            hasHapticTarget = (currentXRControllers.Count > 0);
 #else
             hasHapticTarget = (currentHand != null || (interactable != null && interactable.attachedToHand != null));
 #endif
@@ -649,12 +691,25 @@ public class MetalSwirlPolisher : MonoBehaviour
                 // 2. 触れているとき & 3. 削るとき
                 float speed = velWorld.magnitude;
                 
-                if (speed > 0.02f) 
+                if (speed > 0.02f)
                 {
                     // 3. 削るとき（動いている）: 強く高い振動（ガリガリ感）
-                    float amp = Mathf.Clamp(0.2f + speed * 1.5f, 0f, 1f);
-                    float freq = Mathf.Clamp(100f + speed * 300f, 100f, 300f); 
-                    TriggerHapticFeedback(0.01f, freq, amp);
+                    // 奥に押すとき強く、手前に引くとき弱くする
+                    float baseAmp = Mathf.Clamp(0.2f + speed * 1.5f, 0f, 1f);
+                    float baseFreq = Mathf.Clamp(100f + speed * 300f, 100f, 300f);
+                    Camera cam = Camera.main;
+                    if (cam != null)
+                    {
+                        Vector3 camFwd = cam.transform.forward;
+                        camFwd.y = 0f;
+                        camFwd.Normalize();
+                        float dot = Vector3.Dot(velWorld.normalized, camFwd);
+                        // 奥: 最大1.8倍, 手前: 最小0.3倍
+                        float dirScale = Mathf.Lerp(0.3f, 1.8f, (dot + 1f) * 0.5f);
+                        baseAmp  = Mathf.Clamp(baseAmp * dirScale, 0f, 1f);
+                        baseFreq = Mathf.Clamp(baseFreq * dirScale, 100f, 300f);
+                    }
+                    TriggerHapticFeedback(0.01f, baseFreq, baseAmp);
                 }
                 else
                 {
@@ -1578,7 +1633,9 @@ public class MetalSwirlPolisher : MonoBehaviour
 
     // ====== VR Interaction Fields (Mode A) ======
 #if UNITY_ANDROID
-    private XRBaseController currentXRController;
+    private List<XRBaseController> currentXRControllers = new List<XRBaseController>();
+    private List<Transform> xrInteractorTransforms = new List<Transform>();
+    private Vector3 secondHandLocalGrabPoint; // 2本目の手の掴み位置（ローカル）
 #else
     private Transform currentHandVisual;
     private Vector3 grabPosOffset;
