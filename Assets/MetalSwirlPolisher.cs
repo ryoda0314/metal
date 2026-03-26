@@ -550,29 +550,9 @@ public class MetalSwirlPolisher : MonoBehaviour
              return;
         }
 
-#if UNITY_ANDROID
-        // === 両手持ち回転補正 ===
-        // XRI Instantaneous は hand1 で位置を決めるので、
-        // hand2 の掴み位置に向けてツールを回転させて「がっちり」感を出す
-        if (xrInteractorTransforms.Count >= 2 && xrGrabInteractable != null)
-        {
-            Transform grabRoot = xrGrabInteractable.transform;
-            Transform hand2 = xrInteractorTransforms[1];
-
-            Vector3 currentSecond = grabRoot.TransformPoint(secondHandLocalGrabPoint);
-            Vector3 targetSecond = hand2.position;
-            Vector3 pivot = grabRoot.position;
-
-            Vector3 fromVec = currentSecond - pivot;
-            Vector3 toVec = targetSecond - pivot;
-
-            if (fromVec.sqrMagnitude > 0.0001f && toVec.sqrMagnitude > 0.0001f)
-            {
-                Quaternion correction = Quaternion.FromToRotation(fromVec.normalized, toVec.normalized);
-                grabRoot.rotation = correction * grabRoot.rotation;
-            }
-        }
-#endif
+        // 両手持ち: 2本目の手は振動のみ（位置・回転には影響しない）
+        // → selectMode=Multiple で2本目もコントローラー登録されるため
+        //   haptic送信時に両手に振動が届く
 
         // === 距離計測 & 押し返し & 研磨判定 ===
         // 上方からレイを飛ばす（めり込んでも確実にヒットする）
