@@ -181,6 +181,17 @@ public class MetalSwirlPolisher : MonoBehaviour
     [Tooltip("ブラシのザラつき（個々の研磨粒子の再現）")]
     [Range(0f, 1f)] public float abrasiveJitter = 0.5f;
 
+    // ====== 研磨機力学モデル（振動フィードバック用） ======
+    [Header("Disc Physics (Haptic Model)")]
+    [Tooltip("ディスク回転速度 (rad/s)。正=時計回り(上から見て)")]
+    public float discAngularSpeed = 150f;
+    [Tooltip("ディスク半径 (m)。接線速度 = angularSpeed × radius")]
+    public float discRadius = 0.04f;
+    [Tooltip("Spin axis: ディスク回転軸 (ローカル座標)")]
+    public Vector3 spinAxisLocal = Vector3.up;
+    [Tooltip("Handle axis: グリップ方向 (ローカル座標)")]
+    public Vector3 handleAxisLocal = Vector3.forward;
+
 
     // ====== 内部 ======
     PolisherControllerMount mount; // コントローラー固定スクリプト（あれば Mode B）
@@ -200,6 +211,14 @@ public class MetalSwirlPolisher : MonoBehaviour
     // === 振動フィードバック ===
     void TriggerHapticFeedback(float duration, float frequency, float amplitude)
     {
+        TriggerHapticFeedbackPerHand(duration, frequency, amplitude, amplitude);
+    }
+
+    /// <summary>
+    /// 左右別々の振幅で振動を送る
+    /// </summary>
+    void TriggerHapticFeedbackPerHand(float duration, float frequency, float ampLeft, float ampRight)
+    {
         // 振動の連続発生を防ぐ（高頻度で呼ぶので間隔は短く）
         if (Time.time - lastHapticTime < 0.01f) return;
         lastHapticTime = Time.time;
@@ -207,17 +226,29 @@ public class MetalSwirlPolisher : MonoBehaviour
         // mount がある場合は mount 経由で送信
         if (mount != null && mount.isMounted)
         {
-            mount.SendHaptic(amplitude, duration);
+            mount.SendHaptic(Mathf.Max(ampLeft, ampRight), duration);
             return;
         }
 
 #if UNITY_ANDROID
-        foreach (var ctrl in currentXRControllers)
-            if (ctrl != null) ctrl.SendHapticImpulse(amplitude, duration);
+        for (int i = 0; i < currentXRControllers.Count; i++)
+        {
+            var ctrl = currentXRControllers[i];
+            if (ctrl == null) continue;
+            // xrInteractorTransforms[i] の親名で左右判定
+            bool isLeft = false;
+            if (i < xrInteractorTransforms.Count)
+                isLeft = xrInteractorTransforms[i].GetComponentInParent<ActionBasedController>()
+                    ?.positionAction.action?.bindings.Count > 0 &&
+                    xrInteractorTransforms[i].GetComponentInParent<ActionBasedController>()
+                    .positionAction.action.bindings[0].path.Contains("LeftHand");
+            float amp = isLeft ? ampLeft : ampRight;
+            ctrl.SendHapticImpulse(amp, duration);
+        }
 #else
         Hand hapticHand = currentHand ?? (interactable != null ? interactable.attachedToHand : null);
         if (hapticHand != null)
-            hapticHand.TriggerHapticPulse((ushort)(duration * 1000000f), frequency, amplitude);
+            hapticHand.TriggerHapticPulse((ushort)(duration * 1000000f), frequency, Mathf.Max(ampLeft, ampRight));
 #endif
     }
 
@@ -673,34 +704,65 @@ public class MetalSwirlPolisher : MonoBehaviour
                 
                 if (speed > 0.02f)
                 {
-                    // 3. 削るとき（動いている）: 強く高い振動（ガリガリ感）
-                    // 奥に押すとき強く、手前に引くとき弱くする
-                    float baseAmp = Mathf.Clamp(0.2f + speed * 1.5f, 0f, 1f);
-                    float baseFreq = Mathf.Clamp(100f + speed * 300f, 100f, 300f);
-                    Camera cam = Camera.main;
-                    if (cam != null)
+                    // === 研磨機力学モデルによる振動 ===
+                    // Spin axis (S), Handle axis (H) をワールド座標に変換
+                    Vector3 spinW = transform.TransformDirection(spinAxisLocal).normalized;
+                    Vector3 handleW = transform.TransformDirection(handleAxisLocal).normalized;
+
+                    // ディスク接線速度 Vt = ω × r（接触点での引きずり方向）
+                    // 接触点は概ねContact normal方向の端。簡易的にハンドル前方を接触点方向とする
+                    Vector3 contactDir = Vector3.Cross(spinW, handleW).normalized;
+                    Vector3 Vt = Vector3.Cross(spinW * discAngularSpeed, contactDir * discRadius);
+
+                    // Vm をワーク表面に射影（接線成分のみ）
+                    Vector3 surfaceN = targetCollider.transform.up;
+                    Vector3 VmTan = velWorld - surfaceN * Vector3.Dot(velWorld, surfaceN);
+                    Vector3 VtTan = Vt - surfaceN * Vector3.Dot(Vt, surfaceN);
+
+                    // --- パラメータ1: rotation_resistance ---
+                    // Vt と Vm の角度から回転抵抗を算出
+                    float rotResist = 0f;
+                    if (VmTan.sqrMagnitude > 0.0001f && VtTan.sqrMagnitude > 0.0001f)
                     {
-                        Vector3 camFwd = cam.transform.forward;
-                        camFwd.y = 0f;
-                        camFwd.Normalize();
-                        float dot = Vector3.Dot(velWorld.normalized, camFwd);
-                        // 奥: 最大1.8倍, 手前: 最小0.3倍
-                        float dirScale = Mathf.Lerp(0.3f, 1.8f, (dot + 1f) * 0.5f);
-                        baseAmp  = Mathf.Clamp(baseAmp * dirScale, 0f, 1f);
-                        baseFreq = Mathf.Clamp(baseFreq * dirScale, 100f, 300f);
+                        float cosTheta = Vector3.Dot(VtTan.normalized, VmTan.normalized);
+                        rotResist = -cosTheta; // 対向=+1(最大抵抗), 順行=-1(最小)
                     }
-                    TriggerHapticFeedback(0.01f, baseFreq, baseAmp);
+                    // 0〜1に正規化
+                    float rotResistNorm = (rotResist + 1f) * 0.5f; // 0=順行, 1=対向
+
+                    // --- 振動への変換 ---
+                    // 持ってる(0.25) < 順行(0.45〜) < 対向(〜1.0) はっきり差をつける
+                    // rotResistNorm: 0=順行(力に乗る), 1=対向(逆らう)
+                    float baseAmp = Mathf.Clamp(0.3f + speed * 1.5f, 0f, 0.85f);
+                    float baseFreq = Mathf.Clamp(120f + speed * 300f, 120f, 300f);
+
+                    // 順行=0.55倍, 対向=2.0倍 → 差が約3.6倍
+                    float resistScale = Mathf.Lerp(0.55f, 2.0f, rotResistNorm);
+                    float totalAmp = Mathf.Clamp(baseAmp * resistScale, 0.4f, 1f);
+                    float totalFreq = Mathf.Clamp(baseFreq * resistScale, 120f, 300f);
+
+                    // --- 左右の手への分配 ---
+                    // ディスク接線力の横方向成分で左右差をつける
+                    Vector3 handleRight = Vector3.Cross(surfaceN, handleW).normalized;
+                    float lateralForce = Vector3.Dot(VtTan + VmTan, handleRight);
+                    // 正=ツール右側に力 → 右手が強い
+                    float lateralShift = Mathf.Clamp(lateralForce * 0.15f, -0.3f, 0.3f);
+
+                    float ampRight = Mathf.Clamp(totalAmp + lateralShift, 0f, 1f);
+                    float ampLeft  = Mathf.Clamp(totalAmp - lateralShift, 0f, 1f);
+
+                    TriggerHapticFeedbackPerHand(0.01f, totalFreq, ampLeft, ampRight);
                 }
                 else
                 {
-                    // 2. 触れているとき（止まっている）: 少し強めの低音振動（接触感）
-                    TriggerHapticFeedback(0.01f, 50f, 0.15f);
+                    // 2. 触れているとき（止まっている）: 接触のゴロゴロ感
+                    TriggerHapticFeedback(0.01f, 80f, 0.30f);
                 }
             }
             else
             {
-                // 1. 持っているとき（非接触）: 微弱なアイドリング振動
-                TriggerHapticFeedback(0.01f, 20f, 0.05f);
+                // 1. 持っているとき（非接触）: ディスク回転のブーン感
+                TriggerHapticFeedback(0.01f, 50f, 0.15f);
             }
         }
 

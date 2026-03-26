@@ -553,17 +553,19 @@ public class PolishUIController : MonoBehaviour
         float pixelScale = displaySize.x / canvasBaseWidth; 
         pixelScale = Mathf.Max(pixelScale, 0.0005f);
         
-        canvasObj.transform.localScale = Vector3.one * pixelScale;
+        // Compensate for non-uniform parent scale so UI pixels remain square
+        float yScaleCompensation = targetMenuScale.x / targetMenuScale.y;
+        canvasObj.transform.localScale = new Vector3(pixelScale, pixelScale * yScaleCompensation, pixelScale);
 
         myCanvas = canvasObj.AddComponent<Canvas>();
         myCanvas.renderMode = RenderMode.WorldSpace;
-        
+
         // Fix: Set explicit generic resolution for the WorldSpace canvas
         RectTransform canvasRt = canvasObj.GetComponent<RectTransform>();
         if (!canvasRt) canvasRt = canvasObj.AddComponent<RectTransform>();
-        // Match aspect ratio of displaySize
+        // Match aspect ratio of displaySize, adjusted for Y scale compensation
         float aspect = displaySize.y / displaySize.x;
-        canvasRt.sizeDelta = new Vector2(canvasBaseWidth, canvasBaseWidth * aspect); 
+        canvasRt.sizeDelta = new Vector2(canvasBaseWidth, canvasBaseWidth * aspect / yScaleCompensation);
         
         canvasObj.AddComponent<GraphicRaycaster>();
         
