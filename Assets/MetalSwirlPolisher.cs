@@ -207,6 +207,7 @@ public class MetalSwirlPolisher : MonoBehaviour
     Interactable interactable;         // キャッシュ用
 #endif
     float lastHapticTime;              // 振動の連続防止用
+    bool wasTouchingLastFrame;          // 衝突検知用（前フレームの接触状態）
     
     // === 振動フィードバック ===
     void TriggerHapticFeedback(float duration, float frequency, float amplitude)
@@ -693,78 +694,104 @@ public class MetalSwirlPolisher : MonoBehaviour
                 Debug.LogWarning($"[Polisher DEBUG] RAY MISS! targetCollider={targetCollider.name}, targetPos={targetCollider.transform.position}, polisherPos={transform.position}");
         }
 
-        // === 振動フィードバック (3段階) ===
-        // グリップ（研磨ボタン）を押しているときのみ振動
-        bool hapticActive = (mount != null) ? mount.isTriggerActive : IsTriggerActiveInGrabMode();
-        bool hasHapticTarget = false;
-        if (hapticActive)
+        // === 振動フィードバック ===
+        bool gripActive = (mount != null) ? mount.isTriggerActive : IsTriggerActiveInGrabMode();
+        bool hasHapticTarget = (mount != null && mount.isMounted);
+        if (!hasHapticTarget)
         {
-            hasHapticTarget = (mount != null && mount.isMounted);
-            if (!hasHapticTarget)
-            {
 #if UNITY_ANDROID
-                hasHapticTarget = (currentXRControllers.Count > 0);
+            hasHapticTarget = (currentXRControllers.Count > 0);
 #else
-                hasHapticTarget = (currentHand != null || (interactable != null && interactable.attachedToHand != null));
+            hasHapticTarget = (currentHand != null || (interactable != null && interactable.attachedToHand != null));
 #endif
-            }
         }
+
         if (hasHapticTarget)
         {
-            if (isTouching)
+            // --- 衝突: 接触開始の瞬間（グリップ不問） ---
+            if (isTouching && !wasTouchingLastFrame)
             {
-                // 【大】グリップ＋金属に研磨中
-                float speed = velWorld.magnitude;
+                float impactSpeed = velWorld.magnitude;
+                float impactAmp = Mathf.Clamp(0.4f + impactSpeed * 3f, 0.4f, 1f);
+                TriggerHapticFeedback(0.02f, 200f, impactAmp);
+            }
 
-                if (speed > 0.02f)
+            if (gripActive)
+            {
+                // === グリップ押下中 ===
+                if (isTouching)
                 {
-                    // === 研磨機力学モデルによる振動 ===
-                    Vector3 spinW = transform.TransformDirection(spinAxisLocal).normalized;
-                    Vector3 handleW = transform.TransformDirection(handleAxisLocal).normalized;
+                    // 【大】グリップ＋金属に研磨中
+                    float speed = velWorld.magnitude;
 
-                    Vector3 contactDir = Vector3.Cross(spinW, handleW).normalized;
-                    Vector3 Vt = Vector3.Cross(spinW * discAngularSpeed, contactDir * discRadius);
-
-                    Vector3 surfaceN = targetCollider.transform.up;
-                    Vector3 VmTan = velWorld - surfaceN * Vector3.Dot(velWorld, surfaceN);
-                    Vector3 VtTan = Vt - surfaceN * Vector3.Dot(Vt, surfaceN);
-
-                    float rotResist = 0f;
-                    if (VmTan.sqrMagnitude > 0.0001f && VtTan.sqrMagnitude > 0.0001f)
+                    if (speed > 0.02f)
                     {
-                        float cosTheta = Vector3.Dot(VtTan.normalized, VmTan.normalized);
-                        rotResist = -cosTheta;
+                        // === 研磨機力学モデルによる振動 ===
+                        Vector3 spinW = transform.TransformDirection(spinAxisLocal).normalized;
+                        Vector3 handleW = transform.TransformDirection(handleAxisLocal).normalized;
+
+                        Vector3 contactDir = Vector3.Cross(spinW, handleW).normalized;
+                        Vector3 Vt = Vector3.Cross(spinW * discAngularSpeed, contactDir * discRadius);
+
+                        Vector3 surfaceN = targetCollider.transform.up;
+                        Vector3 VmTan = velWorld - surfaceN * Vector3.Dot(velWorld, surfaceN);
+                        Vector3 VtTan = Vt - surfaceN * Vector3.Dot(Vt, surfaceN);
+
+                        float rotResist = 0f;
+                        if (VmTan.sqrMagnitude > 0.0001f && VtTan.sqrMagnitude > 0.0001f)
+                        {
+                            float cosTheta = Vector3.Dot(VtTan.normalized, VmTan.normalized);
+                            rotResist = -cosTheta;
+                        }
+                        float rotResistNorm = (rotResist + 1f) * 0.5f;
+
+                        float baseAmp = Mathf.Clamp(0.7f + speed * 2.5f, 0.7f, 1f);
+                        float baseFreq = Mathf.Clamp(180f + speed * 400f, 180f, 350f);
+
+                        float resistScale = Mathf.Lerp(0.7f, 2.0f, rotResistNorm);
+
+                        // --- 奥/手前の強弱 ---
+                        float pushPull = Vector3.Dot(VmTan.normalized, handleW);
+                        float pushPullScale = Mathf.Lerp(0.6f, 1.5f, (pushPull + 1f) * 0.5f);
+
+                        float totalAmp = Mathf.Clamp(baseAmp * resistScale * pushPullScale, 0.4f, 1f);
+                        float totalFreq = Mathf.Clamp(baseFreq * resistScale, 180f, 350f);
+
+                        Vector3 handleRight = Vector3.Cross(surfaceN, handleW).normalized;
+                        float lateralForce = Vector3.Dot(VtTan + VmTan, handleRight);
+                        float lateralShift = Mathf.Clamp(lateralForce * 0.15f, -0.3f, 0.3f);
+
+                        float ampRight = Mathf.Clamp(totalAmp + lateralShift, 0f, 1f);
+                        float ampLeft  = Mathf.Clamp(totalAmp - lateralShift, 0f, 1f);
+
+                        TriggerHapticFeedbackPerHand(0.01f, totalFreq, ampLeft, ampRight);
                     }
-                    float rotResistNorm = (rotResist + 1f) * 0.5f;
-
-                    float baseAmp = Mathf.Clamp(0.5f + speed * 2.0f, 0.5f, 1f);
-                    float baseFreq = Mathf.Clamp(150f + speed * 350f, 150f, 320f);
-
-                    float resistScale = Mathf.Lerp(0.6f, 2.0f, rotResistNorm);
-                    float totalAmp = Mathf.Clamp(baseAmp * resistScale, 0.5f, 1f);
-                    float totalFreq = Mathf.Clamp(baseFreq * resistScale, 150f, 320f);
-
-                    Vector3 handleRight = Vector3.Cross(surfaceN, handleW).normalized;
-                    float lateralForce = Vector3.Dot(VtTan + VmTan, handleRight);
-                    float lateralShift = Mathf.Clamp(lateralForce * 0.15f, -0.3f, 0.3f);
-
-                    float ampRight = Mathf.Clamp(totalAmp + lateralShift, 0f, 1f);
-                    float ampLeft  = Mathf.Clamp(totalAmp - lateralShift, 0f, 1f);
-
-                    TriggerHapticFeedbackPerHand(0.01f, totalFreq, ampLeft, ampRight);
+                    else
+                    {
+                        // 【大】金属に触れている（止まっている）
+                        TriggerHapticFeedback(0.01f, 150f, 0.70f);
+                    }
                 }
                 else
                 {
-                    // 【大】金属に触れている（止まっている）
-                    TriggerHapticFeedback(0.01f, 120f, 0.50f);
+                    // 【中】グリップ押下のみ（非接触）: ディスク回転のブーン感
+                    TriggerHapticFeedback(0.01f, 60f, 0.30f);
                 }
             }
-            else
+            else if (isTouching)
             {
-                // 【中】グリップ押下のみ（非接触）: ディスク回転のブーン感
-                TriggerHapticFeedback(0.01f, 60f, 0.30f);
+                // === グリッ���無し＋金属に接触中: ��きずりフィードバック ===
+                // 大きく動いたときのみ（小さい動きは無視して研磨と混同しな���）
+                float dragSpeed = velWorld.magnitude;
+                if (dragSpeed > 0.15f)
+                {
+                    float dragAmp = Mathf.Clamp(0.08f + (dragSpeed - 0.15f) * 0.8f, 0.08f, 0.25f);
+                    float dragFreq = Mathf.Clamp(40f + dragSpeed * 120f, 40f, 120f);
+                    TriggerHapticFeedback(0.01f, dragFreq, dragAmp);
+                }
             }
         }
+        wasTouchingLastFrame = isTouching;
 
         // デバッグキー
         if (enableDebugKeys)
