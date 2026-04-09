@@ -736,9 +736,9 @@ public class MetalSwirlPolisher : MonoBehaviour
                     float baseAmp = Mathf.Clamp(0.3f + speed * 1.5f, 0f, 0.85f);
                     float baseFreq = Mathf.Clamp(120f + speed * 300f, 120f, 300f);
 
-                    // 順行=0.55倍, 対向=2.0倍 → 差が約3.6倍
-                    float resistScale = Mathf.Lerp(0.55f, 2.0f, rotResistNorm);
-                    float totalAmp = Mathf.Clamp(baseAmp * resistScale, 0.4f, 1f);
+                    // 順行=0.4倍, 対向=2.0倍 → 差が5倍
+                    float resistScale = Mathf.Lerp(0.4f, 2.0f, rotResistNorm);
+                    float totalAmp = Mathf.Clamp(baseAmp * resistScale, 0.3f, 1f);
                     float totalFreq = Mathf.Clamp(baseFreq * resistScale, 120f, 300f);
 
                     // --- 左右の手への分配 ---
