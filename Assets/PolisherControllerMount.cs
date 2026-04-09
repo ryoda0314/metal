@@ -114,7 +114,7 @@ public class PolisherControllerMount : MonoBehaviour
         string devicePath = hand == TargetHand.Left
             ? "<XRController>{LeftHand}"
             : "<XRController>{RightHand}";
-        triggerAction = new InputAction("MountTrigger", InputActionType.Value, devicePath + "/trigger");
+        triggerAction = new InputAction("MountTrigger", InputActionType.Value, devicePath + "/grip");
         triggerAction.Enable();
 
         isMounted = true;

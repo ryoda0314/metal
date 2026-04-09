@@ -644,7 +644,15 @@ public class MetalSwirlPolisher : MonoBehaviour
             {
                 isTouching = true;
 
-                bool canPaint = (mount == null) || mount.isTriggerActive;
+                bool canPaint;
+                if (mount != null)
+                {
+                    canPaint = mount.isTriggerActive;
+                }
+                else
+                {
+                    canPaint = IsTriggerActiveInGrabMode();
+                }
                 if (canPaint)
                 {
                     Vector2 uv = hit.textureCoord;
@@ -686,66 +694,58 @@ public class MetalSwirlPolisher : MonoBehaviour
         }
 
         // === 振動フィードバック (3段階) ===
-        bool hasHapticTarget = (mount != null && mount.isMounted);
-        if (!hasHapticTarget)
+        // グリップ（研磨ボタン）を押しているときのみ振動
+        bool hapticActive = (mount != null) ? mount.isTriggerActive : IsTriggerActiveInGrabMode();
+        bool hasHapticTarget = false;
+        if (hapticActive)
         {
+            hasHapticTarget = (mount != null && mount.isMounted);
+            if (!hasHapticTarget)
+            {
 #if UNITY_ANDROID
-            hasHapticTarget = (currentXRControllers.Count > 0);
+                hasHapticTarget = (currentXRControllers.Count > 0);
 #else
-            hasHapticTarget = (currentHand != null || (interactable != null && interactable.attachedToHand != null));
+                hasHapticTarget = (currentHand != null || (interactable != null && interactable.attachedToHand != null));
 #endif
+            }
         }
         if (hasHapticTarget)
         {
             if (isTouching)
             {
-                // 2. 触れているとき & 3. 削るとき
+                // 【大】グリップ＋金属に研磨中
                 float speed = velWorld.magnitude;
-                
+
                 if (speed > 0.02f)
                 {
                     // === 研磨機力学モデルによる振動 ===
-                    // Spin axis (S), Handle axis (H) をワールド座標に変換
                     Vector3 spinW = transform.TransformDirection(spinAxisLocal).normalized;
                     Vector3 handleW = transform.TransformDirection(handleAxisLocal).normalized;
 
-                    // ディスク接線速度 Vt = ω × r（接触点での引きずり方向）
-                    // 接触点は概ねContact normal方向の端。簡易的にハンドル前方を接触点方向とする
                     Vector3 contactDir = Vector3.Cross(spinW, handleW).normalized;
                     Vector3 Vt = Vector3.Cross(spinW * discAngularSpeed, contactDir * discRadius);
 
-                    // Vm をワーク表面に射影（接線成分のみ）
                     Vector3 surfaceN = targetCollider.transform.up;
                     Vector3 VmTan = velWorld - surfaceN * Vector3.Dot(velWorld, surfaceN);
                     Vector3 VtTan = Vt - surfaceN * Vector3.Dot(Vt, surfaceN);
 
-                    // --- パラメータ1: rotation_resistance ---
-                    // Vt と Vm の角度から回転抵抗を算出
                     float rotResist = 0f;
                     if (VmTan.sqrMagnitude > 0.0001f && VtTan.sqrMagnitude > 0.0001f)
                     {
                         float cosTheta = Vector3.Dot(VtTan.normalized, VmTan.normalized);
-                        rotResist = -cosTheta; // 対向=+1(最大抵抗), 順行=-1(最小)
+                        rotResist = -cosTheta;
                     }
-                    // 0〜1に正規化
-                    float rotResistNorm = (rotResist + 1f) * 0.5f; // 0=順行, 1=対向
+                    float rotResistNorm = (rotResist + 1f) * 0.5f;
 
-                    // --- 振動への変換 ---
-                    // 持ってる(0.25) < 順行(0.45〜) < 対向(〜1.0) はっきり差をつける
-                    // rotResistNorm: 0=順行(力に乗る), 1=対向(逆らう)
-                    float baseAmp = Mathf.Clamp(0.3f + speed * 1.5f, 0f, 0.85f);
-                    float baseFreq = Mathf.Clamp(120f + speed * 300f, 120f, 300f);
+                    float baseAmp = Mathf.Clamp(0.5f + speed * 2.0f, 0.5f, 1f);
+                    float baseFreq = Mathf.Clamp(150f + speed * 350f, 150f, 320f);
 
-                    // 順行=0.4倍, 対向=2.0倍 → 差が5倍
-                    float resistScale = Mathf.Lerp(0.4f, 2.0f, rotResistNorm);
-                    float totalAmp = Mathf.Clamp(baseAmp * resistScale, 0.3f, 1f);
-                    float totalFreq = Mathf.Clamp(baseFreq * resistScale, 120f, 300f);
+                    float resistScale = Mathf.Lerp(0.6f, 2.0f, rotResistNorm);
+                    float totalAmp = Mathf.Clamp(baseAmp * resistScale, 0.5f, 1f);
+                    float totalFreq = Mathf.Clamp(baseFreq * resistScale, 150f, 320f);
 
-                    // --- 左右の手への分配 ---
-                    // ディスク接線力の横方向成分で左右差をつける
                     Vector3 handleRight = Vector3.Cross(surfaceN, handleW).normalized;
                     float lateralForce = Vector3.Dot(VtTan + VmTan, handleRight);
-                    // 正=ツール右側に力 → 右手が強い
                     float lateralShift = Mathf.Clamp(lateralForce * 0.15f, -0.3f, 0.3f);
 
                     float ampRight = Mathf.Clamp(totalAmp + lateralShift, 0f, 1f);
@@ -755,14 +755,14 @@ public class MetalSwirlPolisher : MonoBehaviour
                 }
                 else
                 {
-                    // 2. 触れているとき（止まっている）: 接触のゴロゴロ感
-                    TriggerHapticFeedback(0.01f, 80f, 0.30f);
+                    // 【大】金属に触れている（止まっている）
+                    TriggerHapticFeedback(0.01f, 120f, 0.50f);
                 }
             }
             else
             {
-                // 1. 持っているとき（非接触）: ディスク回転のブーン感
-                TriggerHapticFeedback(0.01f, 50f, 0.15f);
+                // 【中】グリップ押下のみ（非接触）: ディスク回転のブーン感
+                TriggerHapticFeedback(0.01f, 60f, 0.30f);
             }
         }
 
@@ -1671,6 +1671,29 @@ public class MetalSwirlPolisher : MonoBehaviour
         }
         maskTex.SetPixels(x0, y0, w, y1 - y0 + 1, block);
         maskTex.Apply(false, false);
+    }
+
+    // ====== Mode A トリガー判定 ======
+    bool IsTriggerActiveInGrabMode()
+    {
+#if UNITY_ANDROID
+        // グラブ中のコントローラーの activateActionValue (= /trigger) を読む
+        for (int i = 0; i < currentXRControllers.Count; i++)
+        {
+            var abc = currentXRControllers[i] as ActionBasedController;
+            if (abc != null && abc.activateActionValue.action != null
+                && abc.activateActionValue.action.ReadValue<float>() > 0.1f)
+                return true;
+        }
+        return false;
+#else
+        if (currentHand != null && currentHand.grabGripAction != null)
+        {
+            // SteamVR: GrabGrip (= グリップボタン) の状態を取得
+            return currentHand.grabGripAction.GetState(currentHand.handType);
+        }
+        return false;
+#endif
     }
 
     // ====== VR Interaction Fields (Mode A) ======

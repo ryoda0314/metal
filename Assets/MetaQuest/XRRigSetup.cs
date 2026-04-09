@@ -251,14 +251,20 @@ public class XRRigSetup : MonoBehaviour
         controller.rotationAction = MakeAction("Rotation", devicePath + "/deviceRotation");
         controller.trackingStateAction = MakeAction("TrackingState", devicePath + "/trackingState");
 
-        // 入力: Select (グリップボタン) = つかむ
-        // ※ "/grip" (float 0-1) をButton型で使用 → 0.5超で発火（gripPressはQuest OpenXRに存在しない）
-        controller.selectAction = MakeAction("Select", devicePath + "/grip", InputActionType.Button);
-        controller.selectActionValue = MakeAction("SelectValue", devicePath + "/grip");
-
-        // 入力: Activate (トリガーボタン) = 操作
-        controller.activateAction = MakeAction("Activate", devicePath + "/trigger", InputActionType.Button);
-        controller.activateActionValue = MakeAction("ActivateValue", devicePath + "/trigger");
+        if (isLeft)
+        {
+            // 左手: グリップ = つかむ（のみ）
+            controller.selectAction = MakeAction("Select", devicePath + "/grip", InputActionType.Button);
+            controller.selectActionValue = MakeAction("SelectValue", devicePath + "/grip");
+        }
+        else
+        {
+            // 右手: トリガー = つかむ、グリップ = 研磨
+            controller.selectAction = MakeAction("Select", devicePath + "/trigger", InputActionType.Button);
+            controller.selectActionValue = MakeAction("SelectValue", devicePath + "/trigger");
+            controller.activateAction = MakeAction("Activate", devicePath + "/grip", InputActionType.Button);
+            controller.activateActionValue = MakeAction("ActivateValue", devicePath + "/grip");
+        }
 
         // ハプティクス用デバイス識別
         controller.hapticDeviceAction = MakeAction("Haptic", devicePath + "/devicePosition");
